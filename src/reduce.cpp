@@ -3,6 +3,11 @@
 #include <algorithm>
 #include <immintrin.h>
 
+#ifdef BITREP_MPI
+# include "mpi.h"
+# include <iostream>
+#endif
+
 namespace bitrep
 {
 
@@ -51,7 +56,7 @@ template<> struct BitTraits<double>
     //                                double T[k], double M[k])
     // { andyReduce_double<k>(n, N, v, T, M); }
 
-#ifdef ANDYMPI
+#ifdef BITREP_MPI
     static MPI_Datatype mpitype() { return MPI_DOUBLE; }
 #endif
 
@@ -471,6 +476,182 @@ double reduce_4(int n, const double *v)
 }
 
 
+/***********************
+ * DOUBLE-SWEEP REDUCE *
+ ***********************/
+
+/**
+ * Compute max value in array using SIMD instructions
+ */
+double maxReduce(int n, const double *v)
+{
+    typedef double ScalarT;
+    typedef BitTraits<ScalarT> Traits;
+    typedef BitTraits<ScalarT>::PackT PackT;
+
+    // Vector registers
+    PackT r_vec, Q_vec;
+
+    /* Find vmax */
+    Q_vec = Traits::set1(0.);
+
+    // Allow pointer arithmetics
+    const ScalarT* const lastP = v + (n / Traits::packSize * Traits::packSize);
+    const int prefetch = 2048 / sizeof(ScalarT);
+
+    while (v != lastP) {
+        _mm_prefetch(v+prefetch, _MM_HINT_T1);
+        r_vec = Traits::load(v);
+        v += Traits::packSize;
+
+        r_vec = Traits::mul(r_vec, r_vec);
+        Q_vec = Traits::max(r_vec, Q_vec);
+    }
+    return std::sqrt(Traits::maxPack(Q_vec));
+}
+
+/**
+ * Optimized version of the internal double sweep using SIMD instructions
+ *
+ * \param n The size of local array
+ * \param N The size of global array
+ * \param v The array of size n
+ * \param[out] T The array that will contain the sums of the k levels
+ * \param[out] M The array that will contain the k extractors
+ */
+template<typename ScalarT, unsigned int k>
+void doublesweep_internal(int64_t n, int64_t N, const double *v, double T[k], double Ms[k], double vmax)
+{
+    typedef BitTraits<ScalarT> Traits;
+    typedef typename Traits::IntType IntType;
+
+    // Vector registers
+    typename Traits::PackT r_vec, Q_vec,
+                           T_vec0, T_vec1, T_vec2, T_vec3,
+                           M_vec0, M_vec1, M_vec2, M_vec3;
+
+    /* Initialize vectors */
+    double beta, M_cur;
+    getOptExtractor<ScalarT>(n, vmax, M_cur, beta);
+    M_vec0 = Traits::set1(M_cur);
+    T_vec0 = Traits::set1(0.);
+    if (k > 1) {
+        M_vec1 = Traits::set1(M_cur *= beta);
+        T_vec1 = Traits::set1(0.);
+    }
+    if (k > 2) {
+        M_vec2 = Traits::set1(M_cur *= beta);
+        T_vec2 = Traits::set1(0.);
+    }
+    if (k > 3) {
+        M_vec3 = Traits::set1(M_cur *= beta);
+        T_vec3 = Traits::set1(0.);
+    }
+
+    // Allow pointer arithmetics
+    const ScalarT* const lastP = v + (n / Traits::packSize * Traits::packSize);
+    const int prefetch = 2048 / sizeof(ScalarT);
+
+    /* Main loop (TODO: support odd n) */
+    while (v != lastP) {
+        _mm_prefetch(v+prefetch, _MM_HINT_T1);
+        r_vec = Traits::load(v);
+        v += Traits::packSize;
+
+        // Level 0
+        if (k > 0) {
+            Q_vec = Traits::add(M_vec0, r_vec);
+            Q_vec = Traits::sub(Q_vec, M_vec0);
+            T_vec0 = Traits::add(T_vec0, Q_vec);
+            if (k > 1) r_vec = Traits::sub(r_vec, Q_vec);
+        }
+
+        // Level 1
+        if (k > 1) {
+            Q_vec = Traits::add(M_vec1, r_vec);
+            Q_vec = Traits::sub(Q_vec, M_vec1);
+            T_vec1 = Traits::add(T_vec1, Q_vec);
+            if (k > 2) r_vec = Traits::sub(r_vec, Q_vec);
+        }
+
+        // Level 2
+        if (k > 2) {
+            Q_vec = Traits::add(M_vec2, r_vec);
+            Q_vec = Traits::sub(Q_vec, M_vec2);
+            T_vec2 = Traits::add(T_vec2, Q_vec);
+            if (k > 3) r_vec = Traits::sub(r_vec, Q_vec);
+        }
+
+        // Level 3
+        if (k > 3) {
+            Q_vec = Traits::add(M_vec3, r_vec);
+            Q_vec = Traits::sub(Q_vec, M_vec3);
+            T_vec3 = Traits::add(T_vec3, Q_vec);
+            //if (k > 4) r_vec = Traits::sub(r_vec, Q_vec);
+        }
+    }
+
+    // Sum the elements in T_vec
+    if (k > 0) {
+        Ms[0] = Traits::getFirst(M_vec0);
+        T[0] = Traits::reducePack(T_vec0) + Ms[0];
+    }
+
+    if (k > 1) {
+        Ms[1] = Traits::getFirst(M_vec1);
+        T[1] = Traits::reducePack(T_vec1) + Ms[1];
+    }
+
+    if (k > 2) {
+        Ms[2] = Traits::getFirst(M_vec2);
+        T[2] = Traits::reducePack(T_vec2) + Ms[2];
+    }
+
+    if (k > 3) {
+        Ms[3] = Traits::getFirst(M_vec3);
+        T[3] = Traits::reducePack(T_vec3) + Ms[3];
+    }
+}
+
+
+template<typename ScalarT, unsigned k>
+ScalarT doublesweep(int64_t n, const ScalarT* v)
+{
+    double vmax = maxReduce(n, v);
+
+    ScalarT T[k], M[k];
+    doublesweep_internal<ScalarT, k>(n, n, v, T, M, vmax);
+
+    ScalarT t = ScalarT(0.);
+    for (int f = k-1; f >= 0; --f) {
+        t += T[f] - M[f];
+    }
+
+    return t;
+}
+
+
+double doublesweep_1(int n, const double* v)
+{
+    return doublesweep<double, 1>(n, v);
+}
+
+double doublesweep_2(int n, const double* v)
+{
+    return doublesweep<double, 2>(n, v);
+}
+
+double doublesweep_3(int n, const double* v)
+{
+    return doublesweep<double, 3>(n, v);
+}
+
+double doublesweep_4(int n, const double* v)
+{
+    return doublesweep<double, 4>(n, v);
+}
+
+
 
 #ifdef BITREP_MPI
 
@@ -622,11 +803,13 @@ double reduce_4(int n, int N, const double* v, MPI_Comm comm)
 }
 
 template<typename ScalarT, unsigned k>
-ScalarT singlesweep_MPI_timing(int64_t n, int64_t N, const ScalarT* v, MPI_Comm comm, double& tComp, double& tComm)
+ScalarT singlesweep_MPI_timing(int64_t n, int64_t N, const ScalarT* v,
+        MPI_Comm comm, double& tComp, double& tComm)
 {
     ScalarT MM[k], T[k], Ts[k];
     double e;
 
+    MPI_Barrier(comm);
     e = MPI_Wtime();
     singlesweep<ScalarT, k>(n, N, v, T, MM);
     tComp = MPI_Wtime() - e;
@@ -636,6 +819,7 @@ ScalarT singlesweep_MPI_timing(int64_t n, int64_t N, const ScalarT* v, MPI_Comm 
     MPI_Op_create(mergesum, 1, &MPI_MERGESUM);
 
     // Perform communication
+    MPI_Barrier(comm);
     e = MPI_Wtime();
     MPI_Reduce(T, Ts, k, BitTraits<ScalarT>::mpitype(), MPI_MERGESUM, 0, comm);
     tComm = MPI_Wtime() - e;
@@ -661,24 +845,90 @@ ScalarT singlesweep_MPI_timing(int64_t n, int64_t N, const ScalarT* v, MPI_Comm 
     return t;
 }
 
-double reduce_1_timing(int n, int N, const double* v, MPI_Comm comm, double& tComp, double& tComm)
+double reduce_1_timing(int n, int N, const double* v, MPI_Comm comm,
+        double& tComp, double& tComm)
 {
     return singlesweep_MPI_timing<double, 1>(n, N, v, comm, tComp, tComm);
 }
 
-double reduce_2_timing(int n, int N, const double* v, MPI_Comm comm, double& tComp, double& tComm)
+double reduce_2_timing(int n, int N, const double* v, MPI_Comm comm,
+        double& tComp, double& tComm)
 {
     return singlesweep_MPI_timing<double, 2>(n, N, v, comm, tComp, tComm);
 }
 
-double reduce_3_timing(int n, int N, const double* v, MPI_Comm comm, double& tComp, double& tComm)
+double reduce_3_timing(int n, int N, const double* v, MPI_Comm comm,
+        double& tComp, double& tComm)
 {
     return singlesweep_MPI_timing<double, 3>(n, N, v, comm, tComp, tComm);
 }
 
-double reduce_4_timing(int n, int N, const double* v, MPI_Comm comm, double& tComp, double& tComm)
+double reduce_4_timing(int n, int N, const double* v, MPI_Comm comm,
+        double& tComp, double& tComm)
 {
     return singlesweep_MPI_timing<double, 4>(n, N, v, comm, tComp, tComm);
+}
+
+
+
+template<typename ScalarT, unsigned k>
+ScalarT doublesweepMPI_timing(int64_t n, int64_t N, const ScalarT* v,
+                             MPI_Comm comm, double& ecomp, double& ecomm)
+{
+    double e;
+    double vmax, vmax_local;
+    double T[k], M[k], Tglobal[k];
+
+    // Local max
+    MPI_Barrier(comm);
+    e = MPI_Wtime();
+    vmax_local = maxReduce(n, v);
+    ecomp = MPI_Wtime() - e;
+
+    // Global max
+    MPI_Barrier(comm);
+    e = MPI_Wtime();
+    MPI_Allreduce(&vmax_local, &vmax, 1, BitTraits<ScalarT>::mpitype(), MPI_SUM, comm);
+    ecomm = MPI_Wtime() - e;
+
+    // Local reduce
+    MPI_Barrier(comm);
+    e = MPI_Wtime();
+    doublesweep_internal<ScalarT, k>(n, N, v, T, M, vmax);
+    ecomp += MPI_Wtime() - e;
+
+    // Global reduce
+    MPI_Barrier(comm);
+    e = MPI_Wtime();
+    MPI_Reduce(T, Tglobal, k, BitTraits<ScalarT>::mpitype(), MPI_SUM, 0, comm);
+    ecomp += MPI_Wtime() - e;
+
+    double res = 0.;
+    for (int f = 0; f < k; ++f)
+        res += Tglobal[f];
+
+    return res;
+}
+
+
+double doublesweep_1_timing(int n, int N, const double* v, MPI_Comm comm, double& tComp, double& tComm)
+{
+    return doublesweepMPI_timing<double, 1>(n, N, v, comm, tComp, tComm);
+}
+
+double doublesweep_2_timing(int n, int N, const double* v, MPI_Comm comm, double& tComp, double& tComm)
+{
+    return doublesweepMPI_timing<double, 2>(n, N, v, comm, tComp, tComm);
+}
+
+double doublesweep_3_timing(int n, int N, const double* v, MPI_Comm comm, double& tComp, double& tComm)
+{
+    return doublesweepMPI_timing<double, 3>(n, N, v, comm, tComp, tComm);
+}
+
+double doublesweep_4_timing(int n, int N, const double* v, MPI_Comm comm, double& tComp, double& tComm)
+{
+    return doublesweepMPI_timing<double, 4>(n, N, v, comm, tComp, tComm);
 }
 
 #endif // BITREP_MPI

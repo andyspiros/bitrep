@@ -43,7 +43,7 @@ namespace bitrep
     double reduce_3_timing(int n, int N, const double* v, MPI_Comm comm, double& tComp, double& tComm);
     double reduce_4_timing(int n, int N, const double* v, MPI_Comm comm, double& tComp, double& tComm);
 
-    template<int k> double reduce_timing(int n, int N, const double* v, MPI_Comm comm, double tComp, double tComm)
+    template<int k> double reduce_timing(int n, int N, const double* v, MPI_Comm comm, double& tComp, double& tComm)
     {
         if (k == 1) return reduce_1_timing(n, N, v, comm, tComp, tComm);
         if (k == 2) return reduce_2_timing(n, N, v, comm, tComp, tComm);
