@@ -290,7 +290,7 @@ inline static ScalarT getFirstM(
  * \param[out] M The array that will contain the k extractors
  */
 template<typename ScalarT, unsigned int k>
-void singlesweep(int64_t n, int64_t N, const ScalarT* v, ScalarT T[k], ScalarT Ms[k])
+void singlesweep_kernel(int64_t n, int64_t N, const ScalarT* v, ScalarT T[k], ScalarT Ms[k])
 {
     typedef BitTraits<ScalarT> Traits;
     typedef typename Traits::IntType IntType;
@@ -442,10 +442,10 @@ void singlesweep(int64_t n, int64_t N, const ScalarT* v, ScalarT T[k], ScalarT M
 
 
 template<typename ScalarT, unsigned k>
-ScalarT reduce_internal(int64_t n, const ScalarT* v)
+ScalarT singlesweep_internal(int64_t n, const ScalarT* v)
 {
     ScalarT T[k], M[k];
-    singlesweep<ScalarT, k>(n, n, v, T, M);
+    singlesweep_kernel<ScalarT, k>(n, n, v, T, M);
 
     ScalarT t = ScalarT(0.);
     for (int f = k-1; f >= 0; --f) {
@@ -455,24 +455,24 @@ ScalarT reduce_internal(int64_t n, const ScalarT* v)
     return t;
 }
 
-double reduce_1(int n, const double *v)
+double singlesweep_1(int n, const double *v)
 {
-    return reduce_internal<double, 1>(n, v);
+    return singlesweep_internal<double, 1>(n, v);
 }
 
-double reduce_2(int n, const double *v)
+double singlesweep_2(int n, const double *v)
 {
-    return reduce_internal<double, 2>(n, v);
+    return singlesweep_internal<double, 2>(n, v);
 }
 
-double reduce_3(int n, const double *v)
+double singlesweep_3(int n, const double *v)
 {
-    return reduce_internal<double, 3>(n, v);
+    return singlesweep_internal<double, 3>(n, v);
 }
 
-double reduce_4(int n, const double *v)
+double singlesweep_4(int n, const double *v)
 {
-    return reduce_internal<double, 4>(n, v);
+    return singlesweep_internal<double, 4>(n, v);
 }
 
 
@@ -752,7 +752,7 @@ ScalarT singlesweep_MPI(int64_t n, int64_t N, const ScalarT* v, MPI_Comm comm)
 {
     ScalarT MM[k], T[k], Ts[k];
 
-    singlesweep<ScalarT, k>(n, N, v, T, MM);
+    singlesweep_kernel<ScalarT, k>(n, N, v, T, MM);
 
     // Register custom vector sum operator
     MPI_Op MPI_MERGESUM;
@@ -782,22 +782,22 @@ ScalarT singlesweep_MPI(int64_t n, int64_t N, const ScalarT* v, MPI_Comm comm)
     return t;
 }
 
-double reduce_1(int n, int N, const double* v, MPI_Comm comm)
+double singlesweep_1(int n, int N, const double* v, MPI_Comm comm)
 {
     return singlesweep_MPI<double, 1>(n, N, v, comm);
 }
 
-double reduce_2(int n, int N, const double* v, MPI_Comm comm)
+double singlesweep_2(int n, int N, const double* v, MPI_Comm comm)
 {
     return singlesweep_MPI<double, 2>(n, N, v, comm);
 }
 
-double reduce_3(int n, int N, const double* v, MPI_Comm comm)
+double singlesweep_3(int n, int N, const double* v, MPI_Comm comm)
 {
     return singlesweep_MPI<double, 3>(n, N, v, comm);
 }
 
-double reduce_4(int n, int N, const double* v, MPI_Comm comm)
+double singlesweep_4(int n, int N, const double* v, MPI_Comm comm)
 {
     return singlesweep_MPI<double, 4>(n, N, v, comm);
 }
@@ -811,7 +811,7 @@ ScalarT singlesweep_MPI_timing(int64_t n, int64_t N, const ScalarT* v,
 
     MPI_Barrier(comm);
     e = MPI_Wtime();
-    singlesweep<ScalarT, k>(n, N, v, T, MM);
+    singlesweep_kernel<ScalarT, k>(n, N, v, T, MM);
     tComp = MPI_Wtime() - e;
 
     // Register custom vector sum operator
@@ -845,25 +845,25 @@ ScalarT singlesweep_MPI_timing(int64_t n, int64_t N, const ScalarT* v,
     return t;
 }
 
-double reduce_1_timing(int n, int N, const double* v, MPI_Comm comm,
+double singlesweep_1_timing(int n, int N, const double* v, MPI_Comm comm,
         double& tComp, double& tComm)
 {
     return singlesweep_MPI_timing<double, 1>(n, N, v, comm, tComp, tComm);
 }
 
-double reduce_2_timing(int n, int N, const double* v, MPI_Comm comm,
+double singlesweep_2_timing(int n, int N, const double* v, MPI_Comm comm,
         double& tComp, double& tComm)
 {
     return singlesweep_MPI_timing<double, 2>(n, N, v, comm, tComp, tComm);
 }
 
-double reduce_3_timing(int n, int N, const double* v, MPI_Comm comm,
+double singlesweep_3_timing(int n, int N, const double* v, MPI_Comm comm,
         double& tComp, double& tComm)
 {
     return singlesweep_MPI_timing<double, 3>(n, N, v, comm, tComp, tComm);
 }
 
-double reduce_4_timing(int n, int N, const double* v, MPI_Comm comm,
+double singlesweep_4_timing(int n, int N, const double* v, MPI_Comm comm,
         double& tComp, double& tComm)
 {
     return singlesweep_MPI_timing<double, 4>(n, N, v, comm, tComp, tComm);

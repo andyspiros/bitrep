@@ -16,7 +16,7 @@ template<int k>
 double doReduce(int n, int N, const double* v, MPI_Comm comm, double& tComp, double& tComm)
 {
     if (k > 0)
-        return bitrep::reduce_timing<k>(n, N, input.data(), comm, tComp, tComm);
+        return bitrep::singlesweep_timing<k>(n, N, input.data(), comm, tComp, tComm);
     else if (k < 0)
         return bitrep::doublesweep_timing<k>(n, N, input.data(), comm, tComp, tComm);
     return 0.; // TODO: conventional reduce
