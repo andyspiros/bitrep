@@ -4,6 +4,7 @@
 
 #include "mpi.h"
 #include "reduce.h"
+#include "convreduce.h"
 #include <cstdio>
 #include <vector>
 #include <boost/random.hpp>
@@ -18,8 +19,9 @@ double doReduce(int n, int N, const double* v, MPI_Comm comm, double& tComp, dou
     if (k > 0)
         return bitrep::singlesweep_timing<k>(n, N, input.data(), comm, tComp, tComm);
     else if (k < 0)
-        return bitrep::doublesweep_timing<k>(n, N, input.data(), comm, tComp, tComm);
-    return 0.; // TODO: conventional reduce
+        return bitrep::doublesweep_timing<-k>(n, N, input.data(), comm, tComp, tComm);
+    else
+        return bitrep::convreduce_timing(n, N, input.data(), comm, tComp, tComm);
 }
 
 void generateVector(int n)
@@ -60,7 +62,7 @@ void test(int n, int N, MPI_Comm comm, bool verbose, int repeat)
     sComm = sqrt(sComm - TComm*TComm);
 
     if (verbose)
-        printf("%8d   %9.5f (%9.5f)   %9.5f (%9.5f)\n", n, TComp*1000., sComp*1000., TComm*1000., sComm*1000.);
+        printf("%8d   %9.5f (%09.5f)   %9.5f (%09.5f)\n", n, TComp*1000., sComp*1000., TComm*1000., sComm*1000.);
 }
 
 int main(int argc, char **argv)
@@ -97,8 +99,14 @@ int main(int argc, char **argv)
         test< 4>
     };
     testfunc_t testfunc = testfuncs[testfuncid+4];
+    const int k = testfuncid;
     if (root)
-        cout << "Testing k = " << testfuncid << "\n" << endl;
+        if (k > 0)
+            cout << "Testing single-sweep with " << k << " levels\n" << endl;
+        else if (k == 0)
+            cout << "Testing conventional sum\n" << endl;
+        else if (k < 0)
+            cout << "Testing double-sweep with " << -k << " levels\n" << endl;
 
     for (int n = 1; n <= nmax; n *= 2) {
         int N = n * nproc;
