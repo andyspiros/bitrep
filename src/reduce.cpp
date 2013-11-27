@@ -5,7 +5,10 @@
 
 #ifdef BITREP_MPI
 # include "mpi.h"
-# include <iostream>
+#endif
+
+#ifndef BITREP_MAXREP
+# define BITREP_MAXREP 1000
 #endif
 
 namespace bitrep
@@ -808,21 +811,42 @@ ScalarT singlesweep_MPI_timing(int64_t n, int64_t N, const ScalarT* v,
 {
     ScalarT MM[k], T[k], Ts[k];
     double e;
+    int repeat;
 
+    // Calculate repeat for computation
     MPI_Barrier(comm);
     e = MPI_Wtime();
     singlesweep_kernel<ScalarT, k>(n, N, v, T, MM);
     tComp = MPI_Wtime() - e;
+    repeat = std::max(5, std::min(BITREP_MAXREP, (int)std::ceil(0.1 / tComp)));
+    MPI_Bcast(&repeat, 1, MPI_INT, 0, comm);
+
+    // Time for computation
+    MPI_Barrier(comm);
+    e = MPI_Wtime();
+    for (int r = 0; r < repeat; ++r)
+        singlesweep_kernel<ScalarT, k>(n, N, v, T, MM);
+    tComp = (MPI_Wtime() - e) / repeat;
 
     // Register custom vector sum operator
     MPI_Op MPI_MERGESUM;
     MPI_Op_create(mergesum, 1, &MPI_MERGESUM);
 
-    // Perform communication
+    // Calculate repeat for communication
     MPI_Barrier(comm);
     e = MPI_Wtime();
     MPI_Reduce(T, Ts, k, BitTraits<ScalarT>::mpitype(), MPI_MERGESUM, 0, comm);
     tComm = MPI_Wtime() - e;
+    repeat = std::max(5, std::min(BITREP_MAXREP, (int)std::ceil(0.1 / tComp)));
+    MPI_Bcast(&repeat, 1, MPI_INT, 0, comm);
+
+    // Time for computation
+    MPI_Barrier(comm);
+    e = MPI_Wtime();
+    for (int r = 0; r < repeat; ++r) {
+        MPI_Reduce(T, Ts, k, BitTraits<ScalarT>::mpitype(), MPI_MERGESUM, 0, comm);
+    }
+    tComm = (MPI_Wtime() - e) / repeat;
 
     // Free operator
     MPI_Op_free(&MPI_MERGESUM);
@@ -878,31 +902,71 @@ ScalarT doublesweepMPI_timing(int64_t n, int64_t N, const ScalarT* v,
     double e;
     double vmax, vmax_local;
     double T[k], M[k], Tglobal[k];
+    double tcomp, tcomm;
+    int repeat;
+    ecomp = ecomm = 0.;
 
     // Local max
     MPI_Barrier(comm);
     e = MPI_Wtime();
     vmax_local = maxReduce(n, v);
-    ecomp = MPI_Wtime() - e;
+    tcomp = MPI_Wtime() - e;
+    repeat = std::max(5, std::min(BITREP_MAXREP, (int)std::ceil(0.1 / tcomp)));
+    MPI_Bcast(&repeat, 1, MPI_INT, 0, comm);
+    
+    // Time for local max
+    MPI_Barrier(comm);
+    e = MPI_Wtime();
+    for (int r = 0; r < repeat; ++r)
+        vmax_local = maxReduce(n, v);
+    ecomp += (MPI_Wtime() - e) / repeat;
 
     // Global max
     MPI_Barrier(comm);
     e = MPI_Wtime();
     MPI_Allreduce(&vmax_local, &vmax, 1, BitTraits<ScalarT>::mpitype(), MPI_SUM, comm);
-    ecomm = MPI_Wtime() - e;
+    tcomm = MPI_Wtime() - e;
+    repeat = std::max(5, std::min(BITREP_MAXREP, (int)std::ceil(0.1 / tcomp)));
+    MPI_Bcast(&repeat, 1, MPI_INT, 0, comm);
+    
+    // Time for Global max
+    MPI_Barrier(comm);
+    e = MPI_Wtime();
+    for (int r = 0; r < repeat; ++r)
+        MPI_Allreduce(&vmax_local, &vmax, 1, BitTraits<ScalarT>::mpitype(), MPI_SUM, comm);
+    ecomm += (MPI_Wtime() - e) / repeat;
 
-    // Local reduce
+    // Calculate repeat for computation
     MPI_Barrier(comm);
     e = MPI_Wtime();
     doublesweep_internal<ScalarT, k>(n, N, v, T, M, vmax);
-    ecomp += MPI_Wtime() - e;
+    tcomp = MPI_Wtime() - e;
+    repeat = std::max(5, std::min(BITREP_MAXREP, (int)std::ceil(0.1 / tcomp)));
+    MPI_Bcast(&repeat, 1, MPI_INT, 0, comm);
 
-    // Global reduce
+    // Time for computation
+    MPI_Barrier(comm);
+    e = MPI_Wtime();
+    for (int r = 0; r < repeat; ++r)
+        doublesweep_internal<ScalarT, k>(n, N, v, T, M, vmax);
+    ecomp += (MPI_Wtime() - e) / repeat;
+    
+    // Calculate repeat for communication
     MPI_Barrier(comm);
     e = MPI_Wtime();
     MPI_Reduce(T, Tglobal, k, BitTraits<ScalarT>::mpitype(), MPI_SUM, 0, comm);
-    ecomp += MPI_Wtime() - e;
+    tcomm = MPI_Wtime() - e;
+    repeat = std::max(5, std::min(BITREP_MAXREP, (int)std::ceil(0.1 / tcomp)));
+    MPI_Bcast(&repeat, 1, MPI_INT, 0, comm);
 
+    // Time for computation
+    MPI_Barrier(comm);
+    e = MPI_Wtime();
+    for (int r = 0; r < repeat; ++r)
+        MPI_Reduce(T, Tglobal, k, BitTraits<ScalarT>::mpitype(), MPI_SUM, 0, comm);
+    ecomm += (MPI_Wtime() - e) / repeat;
+
+    // Compute final result
     double res = 0.;
     for (int f = 0; f < k; ++f)
         res += Tglobal[f];

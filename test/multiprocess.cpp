@@ -14,7 +14,7 @@ using namespace std;
 vector<double> input;
 
 template<int k>
-double doReduce(int n, int N, const double* v, MPI_Comm comm, double& tComp, double& tComm)
+inline double doReduce(int n, int N, const double* v, MPI_Comm comm, double& tComp, double& tComm)
 {
     if (k > 0)
         return bitrep::singlesweep_timing<k>(n, N, input.data(), comm, tComp, tComm);

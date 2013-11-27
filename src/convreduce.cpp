@@ -177,18 +177,38 @@ double convreduce_timing(int n, int N, const double* v, MPI_Comm comm, double& t
 {
     double localres, globalres;
     double e;
+    int repeat;
 
-    // Local computation
+    // Calculate repeat for computation
     MPI_Barrier(comm);
     e = MPI_Wtime();
     localres = convreduce(n, v);
     tComp = MPI_Wtime() - e;
+    repeat = std::max(5, std::min(BITREP_MAXREP, (int)std::ceil(0.1 / tComp)));
+    MPI_Bcast(&repeat, 1, MPI_INT, 0, comm);
 
-    // Communication
+    // Local computation
+    MPI_Barrier(comm);
+    e = MPI_Wtime();
+    for (int r = 0; r < repeat; ++r)
+        localres = convreduce(n, v);
+    tComp = (MPI_Wtime() - e) / repeat;
+
+    // Calculate repeat for communication
     MPI_Barrier(comm);
     e = MPI_Wtime();
     MPI_Reduce(&localres, &globalres, 1, MPI_DOUBLE, MPI_SUM, 0, comm);
     tComm = MPI_Wtime() - e;
+    repeat = std::max(5, std::min(BITREP_MAXREP, (int)std::ceil(0.1 / tComp)));
+    MPI_Bcast(&repeat, 1, MPI_INT, 0, comm);
+
+    // Time for computation
+    MPI_Barrier(comm);
+    e = MPI_Wtime();
+    for (int r = 0; r < repeat; ++r) {
+        MPI_Reduce(&localres, &globalres, 1, MPI_DOUBLE, MPI_SUM, 0, comm);
+    }
+    tComm = (MPI_Wtime() - e) / repeat;
 
     return globalres;
 }
