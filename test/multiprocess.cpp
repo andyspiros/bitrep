@@ -55,14 +55,11 @@ void test(int n, int N, MPI_Comm comm, bool verbose, int repeat)
     sComp /= repeat;
     sComm /= repeat;
 
-    // if (verbose)
-    //     cout << "E[X^2] = " << sComp << "   ---   E[X]^2 = " << TComp*TComp << endl;
-
     sComp = sqrt(sComp - TComp*TComp);
     sComm = sqrt(sComm - TComm*TComm);
 
     if (verbose)
-        printf("%8d   %9.5f (%09.5f)   %9.5f (%09.5f)\n", n, TComp*1000., sComp*1000., TComm*1000., sComm*1000.);
+        printf("%8d | %9.5f (%09.5f) | %9.5f (%09.5f)\n", n, TComp*1000., sComp*1000., TComm*1000., sComm*1000.);
 }
 
 int main(int argc, char **argv)
@@ -78,7 +75,7 @@ int main(int argc, char **argv)
     for(int p = 1; 2*p <= nproc; p *= 2)
         nproc2 *= 2;
 
-    const int nmax = 1 << 22;
+    const int nmax = 1 << 25;
     generateVector(nmax);
 
     // Choose test
@@ -100,7 +97,9 @@ int main(int argc, char **argv)
     };
     testfunc_t testfunc = testfuncs[testfuncid+4];
     const int k = testfuncid;
-    if (root)
+    if (root) {
+        cout << nproc << " participating processes\n";
+
         if (k > 0)
             cout << "Testing single-sweep with " << k << " levels\n" << endl;
         else if (k == 0)
@@ -108,9 +107,18 @@ int main(int argc, char **argv)
         else if (k < 0)
             cout << "Testing double-sweep with " << -k << " levels\n" << endl;
 
+        cout << "Local n  |    Computation time   |   Communication time\n";
+        cout << "---------+-----------------------+----------------------\n";
+    }
+
     for (int n = 1; n <= nmax; n *= 2) {
         int N = n * nproc;
         testfunc(n, N, MPI_COMM_WORLD, root, 10);
+    }
+
+    if (root)
+    {
+        cout << "--------------------------------------------------------\n\n\n";
     }
 
     MPI_Finalize();
