@@ -4,6 +4,10 @@
 #include <algorithm>
 #include <immintrin.h>
 
+#ifndef BITREP_MAXREP
+# define BITREP_MAXREP 1000
+#endif
+
 /* Fortran interface for BLAS */
 #ifdef BITREP_BLAS
 extern "C"
