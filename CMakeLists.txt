@@ -20,4 +20,4 @@ add_library (bitrepreduce STATIC "src/reduce.cpp" "src/convreduce.cpp")
 set_property (TARGET bitrepreduce PROPERTY COMPILE_FLAGS "-mavx")
 
 add_executable (benchmark "./test/multiprocess.cpp")
-target_link_libraries (benchmark bitrepreduce ${MPI_CXX_LIBRARIES})
+target_link_libraries (benchmark bitrepreduce ${mpilib})
