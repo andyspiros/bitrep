@@ -4,15 +4,15 @@ enable_language (CXX)
 
 find_package(MPI REQUIRED)
 
+add_definitions("-DBITREP_MPI")
+include_directories("src")
+
 set (REDUCELIB_SOURCES
     "./src/reduce.cpp"
     "./src/convreduce.cpp"
     )
-
-add_definitions("-DBITREP_MPI")
-include_directories("src")
-
-add_library (bitrepreduce STATIC ${REDUCELIB_SOURCES})
+add_library (bitrepreduce STATIC "src/reduce.cpp" "src/convreduce.cpp")
+set_property(TARGET bitrepreduce PROPERTY COMPILE_FLAGS "-mavx")
 
 add_executable (benchmark "./test/multiprocess.cpp")
 target_link_libraries (benchmark bitrepreduce ${MPI_CXX_LIBRARIES})
