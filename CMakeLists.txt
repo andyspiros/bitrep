@@ -41,10 +41,10 @@ set (REDUCELIB_SOURCES
 add_library (bitrepreduce STATIC ${REDUCELIB_SOURCES})
 
 # Functions
-set (TRASCENDLIB_SOURCES
+set (TRANSCENDLIB_SOURCES
     "./src/br_transcendentals.cpp"
     )
-add_library (bitreptrascend STATIC ${TRASCENDLIB_SOURCES})
+add_library (bitreptranscend STATIC ${TRANSCENDLIB_SOURCES})
 
 #add_executable (benchmark "./test/multiprocess.cpp")
 #target_link_libraries (benchmark bitrepreduce ${mpilib})
